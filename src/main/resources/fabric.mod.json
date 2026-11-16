@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "piglincheck",
+  "version": "1.0.0",
+  "name": "Piglin Check",
+  "description": "After F3+B (hitboxes) you must see a zombified piglin within 15 seconds or you get disconnected.",
+  "authors": ["you"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["com.example.piglincheck.PiglinCheckClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.18.0",
+    "minecraft": "1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
