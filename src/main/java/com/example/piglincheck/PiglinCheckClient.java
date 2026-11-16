@@ -3,39 +3,34 @@ package com.example.piglincheck;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.hud.debug.DebugHudEntries;
 import net.minecraft.client.render.Camera;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.mob.ZombifiedPiglinEntity;
 import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
+import org.lwjgl.glfw.GLFW;
 
 /**
- * When hitboxes are turned on (F3+B), you have 15 seconds to actually SEE at least one
- * zombified piglin (on screen + line of sight). Piglins that are merely loaded do not count.
- * If you don't, you get disconnected from the server.
+ * Press F3+B (hitboxes). You then have 15 seconds to SEE a zombified piglin
+ * (on screen + line of sight). Loaded-but-unseen piglins don't count.
+ * If you don't see one, you are disconnected.
+ *
+ * The F3+B press is detected directly from the keyboard, so it does not depend
+ * on any Minecraft internals that change between versions.
+ * Pressing F3+B again turns the check off.
  */
 public class PiglinCheckClient implements ClientModInitializer {
 
-    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("piglincheck");
-
-    /** Seconds you get after enabling hitboxes. */
     private static final int TIMEOUT_SECONDS = 15;
     private static final int TIMEOUT_TICKS = TIMEOUT_SECONDS * 20;
-
-    /** Piglins farther away than this (blocks) don't count as "seen". */
     private static final double MAX_DISTANCE = 64.0;
-
-    /** Require an unobstructed line of sight (no blocks between camera and piglin). */
     private static final boolean REQUIRE_LINE_OF_SIGHT = true;
 
-    /** If true, a new 15s window starts after a successful sighting while hitboxes stay on. */
-    private static final boolean REARM_AFTER_SEEN = false;
-
-    private boolean hitboxesWereOn = false;
+    /** Our own copy of the hitbox on/off state, flipped on every F3+B press. */
+    private boolean hitboxesOn = false;
+    private boolean bWasDown = false;
     private boolean satisfied = false;
     private int ticksLeft = TIMEOUT_TICKS;
 
@@ -44,92 +39,65 @@ public class PiglinCheckClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(this::onTick);
     }
 
-    private void reset() {
-        hitboxesWereOn = false;
+    private void resetAll() {
+        hitboxesOn = false;
+        bWasDown = false;
         satisfied = false;
         ticksLeft = TIMEOUT_TICKS;
     }
 
     private void onTick(MinecraftClient client) {
         if (client.world == null || client.player == null || client.getNetworkHandler() == null) {
-            reset();
+            resetAll();
             return;
         }
 
-        boolean hitboxesOn = hitboxesVisible(client);
-
-        if (!hitboxesOn) {
-            if (hitboxesWereOn) {
-                client.player.sendMessage(Text.literal("[PiglinCheck] Hitboxes off - check cancelled."), true);
-            }
-            reset();
-            return;
-        }
-
-        if (!hitboxesWereOn) {
-            // F3+B just turned hitboxes on: start the timer.
-            hitboxesWereOn = true;
-            client.player.sendMessage(Text.literal("[PiglinCheck] Hitboxes on - you have "
-                    + TIMEOUT_SECONDS + "s to see a zombified piglin."), true);
+        // --- detect F3+B ---
+        long window = client.getWindow().getHandle();
+        boolean f3Down = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_F3) == GLFW.GLFW_PRESS;
+        boolean bDown = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_B) == GLFW.GLFW_PRESS;
+        if (f3Down && bDown && !bWasDown) {
+            hitboxesOn = !hitboxesOn;
             satisfied = false;
             ticksLeft = TIMEOUT_TICKS;
+            if (hitboxesOn) {
+                msg(client, "Hitboxes ON - you have " + TIMEOUT_SECONDS + "s to see a zombified piglin.");
+            } else {
+                msg(client, "Hitboxes OFF - check cancelled.");
+            }
         }
+        bWasDown = bDown;
 
-        if (satisfied) {
+        if (!hitboxesOn || satisfied) {
             return;
         }
 
+        // --- the actual check ---
         if (seesZombifiedPiglin(client)) {
-            client.player.sendMessage(Text.literal("[PiglinCheck] Piglin spotted - you're good."), true);
-            if (REARM_AFTER_SEEN) {
-                ticksLeft = TIMEOUT_TICKS;
-            } else {
-                satisfied = true;
-            }
+            msg(client, "Zombified piglin seen - you're good.");
+            satisfied = true;
             return;
         }
 
         ticksLeft--;
-        if (ticksLeft % 20 == 0 && ticksLeft > 0) {
-            client.player.sendMessage(
-                    Text.literal("[PiglinCheck] No zombified piglin seen - disconnecting in " + (ticksLeft / 20) + "s"),
-                    true);
+        if (ticksLeft > 0 && ticksLeft % 20 == 0) {
+            msg(client, "No zombified piglin seen - disconnecting in " + (ticksLeft / 20) + "s");
         }
-
         if (ticksLeft <= 0) {
-            reset();
+            resetAll();
             client.getNetworkHandler().getConnection().disconnect(
                     Text.literal("[PiglinCheck] No zombified piglin seen within " + TIMEOUT_SECONDS + " seconds."));
         }
     }
 
-    /** In 1.21.11 F3+B toggles a debug HUD entry; find its id once and ask the debug profile. */
-    private static Identifier hitboxEntryId = null;
-
-    private static boolean hitboxesVisible(MinecraftClient client) {
-        if (hitboxEntryId == null) {
-            for (Object key : DebugHudEntries.getEntries().keySet()) {
-                if (key instanceof Identifier id && id.getPath().toLowerCase().contains("hitbox")) {
-                    hitboxEntryId = id;
-                    LOGGER.info("[PiglinCheck] using hitbox debug entry id: {}", id);
-                    break;
-                }
-            }
-            if (hitboxEntryId == null) {
-                LOGGER.warn("[PiglinCheck] no hitbox debug entry found; known ids: {}",
-                        DebugHudEntries.getEntries().keySet());
-                hitboxEntryId = Identifier.ofVanilla("entity_hitboxes");
-            }
-        }
-        return client.debugHudEntryList.isEntryVisible(hitboxEntryId);
+    private static void msg(MinecraftClient client, String text) {
+        client.player.sendMessage(Text.literal("[PiglinCheck] " + text), true);
     }
 
     private boolean seesZombifiedPiglin(MinecraftClient client) {
         Camera camera = client.gameRenderer.getCamera();
-        // Eye position of the player (same as the camera in first person).
         Vec3d camPos = client.player.getEyePos();
 
-        // Camera basis vectors from yaw/pitch.
         Vec3d forward = Vec3d.fromPolar(camera.getPitch(), camera.getYaw()).normalize();
         Vec3d up = Vec3d.fromPolar(camera.getPitch() - 90.0f, camera.getYaw()).normalize();
         Vec3d right = forward.crossProduct(up).normalize();
@@ -151,7 +119,6 @@ public class PiglinCheckClient implements ClientModInitializer {
 
             double w = entity.getWidth() / 2.0;
             double h = entity.getHeight();
-            // Several sample points so a partly visible piglin still counts.
             Vec3d[] points = new Vec3d[] {
                     base.add(0, h * 0.5, 0),
                     base.add(0, h * 0.9, 0),
