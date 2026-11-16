@@ -3,10 +3,12 @@ package com.example.piglincheck;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.hud.debug.DebugHudEntries;
 import net.minecraft.client.render.Camera;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.mob.ZombifiedPiglinEntity;
 import net.minecraft.text.Text;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
@@ -52,7 +54,7 @@ public class PiglinCheckClient implements ClientModInitializer {
             return;
         }
 
-        boolean hitboxesOn = client.getEntityRenderDispatcher().shouldRenderHitboxes();
+        boolean hitboxesOn = hitboxesVisible(client);
 
         if (!hitboxesOn) {
             if (hitboxesWereOn) {
@@ -97,9 +99,28 @@ public class PiglinCheckClient implements ClientModInitializer {
         }
     }
 
+    /** In 1.21.11 F3+B toggles a debug HUD entry; find its id once and ask the debug profile. */
+    private static Identifier hitboxEntryId = null;
+
+    private static boolean hitboxesVisible(MinecraftClient client) {
+        if (hitboxEntryId == null) {
+            for (Object key : DebugHudEntries.getEntries().keySet()) {
+                if (key instanceof Identifier id && id.getPath().contains("hitbox")) {
+                    hitboxEntryId = id;
+                    break;
+                }
+            }
+            if (hitboxEntryId == null) {
+                hitboxEntryId = Identifier.ofVanilla("entity_hitboxes");
+            }
+        }
+        return client.debugHudEntryList.isEntryVisible(hitboxEntryId);
+    }
+
     private boolean seesZombifiedPiglin(MinecraftClient client) {
         Camera camera = client.gameRenderer.getCamera();
-        Vec3d camPos = camera.getPos();
+        // Eye position of the player (same as the camera in first person).
+        Vec3d camPos = client.player.getEyePos();
 
         // Camera basis vectors from yaw/pitch.
         Vec3d forward = Vec3d.fromPolar(camera.getPitch(), camera.getYaw()).normalize();
@@ -116,13 +137,13 @@ public class PiglinCheckClient implements ClientModInitializer {
             if (!(entity instanceof ZombifiedPiglinEntity) || !entity.isAlive()) {
                 continue;
             }
-            if (entity.getPos().distanceTo(camPos) > MAX_DISTANCE) {
+            Vec3d base = new Vec3d(entity.getX(), entity.getY(), entity.getZ());
+            if (base.distanceTo(camPos) > MAX_DISTANCE) {
                 continue;
             }
 
             double w = entity.getWidth() / 2.0;
             double h = entity.getHeight();
-            Vec3d base = entity.getPos();
             // Several sample points so a partly visible piglin still counts.
             Vec3d[] points = new Vec3d[] {
                     base.add(0, h * 0.5, 0),
