@@ -20,6 +20,8 @@ import net.minecraft.world.RaycastContext;
  */
 public class PiglinCheckClient implements ClientModInitializer {
 
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("piglincheck");
+
     /** Seconds you get after enabling hitboxes. */
     private static final int TIMEOUT_SECONDS = 15;
     private static final int TIMEOUT_TICKS = TIMEOUT_SECONDS * 20;
@@ -67,6 +69,8 @@ public class PiglinCheckClient implements ClientModInitializer {
         if (!hitboxesWereOn) {
             // F3+B just turned hitboxes on: start the timer.
             hitboxesWereOn = true;
+            client.player.sendMessage(Text.literal("[PiglinCheck] Hitboxes on - you have "
+                    + TIMEOUT_SECONDS + "s to see a zombified piglin."), true);
             satisfied = false;
             ticksLeft = TIMEOUT_TICKS;
         }
@@ -105,12 +109,15 @@ public class PiglinCheckClient implements ClientModInitializer {
     private static boolean hitboxesVisible(MinecraftClient client) {
         if (hitboxEntryId == null) {
             for (Object key : DebugHudEntries.getEntries().keySet()) {
-                if (key instanceof Identifier id && id.getPath().contains("hitbox")) {
+                if (key instanceof Identifier id && id.getPath().toLowerCase().contains("hitbox")) {
                     hitboxEntryId = id;
+                    LOGGER.info("[PiglinCheck] using hitbox debug entry id: {}", id);
                     break;
                 }
             }
             if (hitboxEntryId == null) {
+                LOGGER.warn("[PiglinCheck] no hitbox debug entry found; known ids: {}",
+                        DebugHudEntries.getEntries().keySet());
                 hitboxEntryId = Identifier.ofVanilla("entity_hitboxes");
             }
         }
